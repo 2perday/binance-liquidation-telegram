@@ -80,7 +80,7 @@ async def connectWebsocket():
         except Exception as e:
             logging.error(f"Websocket Error! ({e})")
 
-        logging.INFO("Websocket Connecting...")
+        logging.info("Websocket Connecting...")
         await asyncio.sleep(5)
 
 
