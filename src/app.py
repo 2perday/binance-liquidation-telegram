@@ -3,7 +3,7 @@ import json
 import logging
 import os
 
-import websockets
+from websockets.asyncio.client import connect
 from dotenv import load_dotenv
 from telegram import Bot
 
@@ -14,19 +14,15 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-load_dotenv(
-    dotenv_path=os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "config", ".env"
-    )
-)
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 URL = os.getenv("URL")
-THRESHOLD = int(os.getenv("THRESHOLD", 50000))
-# BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-# CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL")
+THRESHOLD = int(os.getenv("THRESHOLD", 50000))  # default: 50k
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")
 
 
-# bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 
 async def gate_data(raw_data):
@@ -39,7 +35,7 @@ async def gate_data(raw_data):
         if liq_value >= THRESHOLD:
             await process_message(raw_data, liq_value, avg_price)
     else:
-        logging.error("gateData Error!: rawData is Not 'forceOrder'.")
+        logging.error("gate_data Error!: raw_data is Not 'forceOrder'.")
 
 
 def get_emoji(liq_value):
@@ -70,75 +66,33 @@ async def process_message(raw_data, liq_value, avg_price):
 
 
 async def send_message(message):
-    # try:
-    #     await bot.send_message(CHANNEL_ID, text=message)
-    #     logging.info(f"sendMessage: {message}")
-    # except Exception as e:
-    #     logging.error(f"sendMessage Error!: {e}")
-    print(message)
+    try:
+        await bot.send_message(TELEGRAM_CHANNEL, text=message)
+        logging.info(f"send_message: {message}")
+    except Exception as e:
+        logging.error(f"send_message Error!: {e}")
 
 
-async def handle_websocket():
-    connection_tried = 0
-
+async def main():
     while True:
         try:
-            async with websockets.connect(URL) as ws:
+            async with connect(URL) as ws:
                 logging.info("✅ WebSocket Connected.")
-                connection_tried = 0
 
-                async for message in ws:
-                    try:
-                        data = json.loads(message)
-                        await gate_data(data)
-                    except json.JSONDecodeError as e:
-                        logging.warning(
-                            f"⚠️ JSON Decode Error: {e} | Raw message: {message}"
-                        )
-                    except Exception as e:
-                        logging.error(
-                            f"❌ Error Processing Message: {e} | Message: {message}"
-                        )
-        except (
-            websockets.exceptions.ConnectionClosedError,
-            websockets.exceptions.ConnectionClosedOK,
-        ) as e:
-            logging.warning(f"❌ WebSocket Connection Closed: {e}")
+                while True:
+                    message = await ws.recv()
+                    data = json.loads(message)
+                    await gate_data(data)
+        except asyncio.CancelledError:
+            logging.info("✅ WebSocket Connection Closed.")
+            raise
         except Exception as e:
-            logging.error(f"⚠️ WebSocket Connection Error: {e}")
-
-        if connection_tried <= 5:
-            logging.info("🔁 Reconnecting Websocket...")
-            connection_tried += 1
+            logging.error(f"❌ WebSocket Connection Error: {e}")
             await asyncio.sleep(5)
-        else:
-            await send_message("Bot Stopped.")
-            logging.error("❌ Maximum econnect attempts reached. Exiting.")
-            break
-
-
-# async def main():
-#     await handle_websocket()
 
 
 if __name__ == "__main__":
     try:
-        loop = asyncio.new_event_loop()
-
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(handle_websocket())
+        asyncio.run(main())
     except KeyboardInterrupt:
-        logging.info("⚠️ KeyboardInterrupt received. Exiting gracefully...")
-    finally:
-        pending = asyncio.all_tasks(loop)
-
-        for task in pending:
-            task.cancel()
-
-        logging.info("⚠️ Cancelling pending tasks...")
-
-        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
-
-        logging.info("✅ Event loop closed cleanly.")
+        logging.info("✅ KeyboardInterrupt received.")
